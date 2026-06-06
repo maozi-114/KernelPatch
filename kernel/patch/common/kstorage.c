@@ -60,7 +60,7 @@ int write_kstorage(int gid, long did, void *data, int offset, int len, bool data
 
     rcu_read_lock();
 
-    list_for_each_entry(pos, head, list)
+    list_for_each_entry_rcu(pos, head, list)
     {
         if (pos->did == did) {
             old = pos;
@@ -120,7 +120,7 @@ const struct kstorage *get_kstorage(int gid, long did)
     struct list_head *head = &kstorage_groups[gid];
     struct kstorage *pos = 0;
 
-    list_for_each_entry(pos, head, list)
+    list_for_each_entry_rcu(pos, head, list)
     {
         if (pos->did == did) {
             return pos;
@@ -142,7 +142,7 @@ int on_each_kstorage_elem(int gid, on_kstorage_cb cb, void *udata)
 
     rcu_read_lock();
 
-    list_for_each_entry(pos, head, list)
+    list_for_each_entry_rcu(pos, head, list)
     {
         int rc = cb(pos, udata);
         if (rc) break;
@@ -194,7 +194,7 @@ int list_kstorage_ids(int gid, long *ids, int idslen, bool data_is_user)
 
     rcu_read_lock();
 
-    list_for_each_entry(pos, head, list)
+    list_for_each_entry_rcu(pos, head, list)
     {
         if (cnt >= idslen) break;
 
@@ -227,7 +227,7 @@ int remove_kstorage(int gid, long did)
 
     spin_lock(lock);
 
-    list_for_each_entry(pos, head, list)
+    list_for_each_entry_rcu(pos, head, list)
     {
         if (pos->did == did) {
             list_del_rcu(&pos->list);
