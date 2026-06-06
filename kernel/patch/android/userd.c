@@ -133,21 +133,38 @@ static const void *kernel_read_file(const char *path, loff_t *len)
 {
     set_priv_sel_allow(current, true);
     void *data = 0;
+    *len = 0;
 
     struct file *filp = filp_open(path, O_RDONLY, 0);
     if (!filp || IS_ERR(filp)) {
-        log_boot("open file: %s error: %d\n", path, PTR_ERR(filp));
+        log_boot("open file: %s error: %ld\n", path, IS_ERR(filp) ? PTR_ERR(filp) : -1);
         goto out;
     }
     *len = vfs_llseek(filp, 0, SEEK_END);
+    if (*len <= 0) {
+        log_boot("file %s empty or invalid length: %lld\n", path, *len);
+        filp_close(filp, 0);
+        *len = 0;
+        goto out;
+    }
     vfs_llseek(filp, 0, SEEK_SET);
     data = vmalloc(*len + 1);
     if (!data) {
+        log_boot("vmalloc failed for %s size=%lld\n", path, *len);
         filp_close(filp, 0);
+        *len = 0;
         goto out;
     }
     loff_t pos = 0;
-    kernel_read(filp, data, *len, &pos);
+    ssize_t read_ret = kernel_read(filp, data, *len, &pos);
+    if (read_ret != *len) {
+        log_boot("kernel_read %s failed: expected=%lld actual=%ld\n", path, *len, (long)read_ret);
+        kvfree(data);
+        filp_close(filp, 0);
+        data = 0;
+        *len = 0;
+        goto out;
+    }
     ((char *)data)[*len] = '\0';
     filp_close(filp, 0);
 
@@ -1354,7 +1371,19 @@ static void post_init_second_stage()
 
 static void on_first_app_process()
 {
-    refresh_trusted_manager_state();
+    int rc;
+    
+    log_boot("on_first_app_process: start\n");
+    
+    rc = refresh_trusted_manager_state();
+    if (rc) {
+        log_boot("on_first_app_process: refresh_trusted_manager_state failed rc=%d\n", rc);
+        // Don't crash on failure, continue boot
+    } else {
+        log_boot("on_first_app_process: refresh_trusted_manager_state success\n");
+    }
+    
+    log_boot("on_first_app_process: done\n");
 }
 
 static void handle_before_execve(hook_local_t *hook_local, char **__user u_filename_p, char **__user uargv,
@@ -1451,6 +1480,15 @@ static void after_execve(hook_fargs3_t *args, void *udata);
 static void before_execveat(hook_fargs5_t *args, void *udata);
 static void after_execveat(hook_fargs5_t *args, void *udata);
 
+#include <linux/workqueue.h>
+
+static void do_unhook_execve_work(struct work_struct *work)
+{
+    unhook_syscalln(__NR_execve, before_execve, after_execve);
+    unhook_syscalln(__NR_execveat, before_execveat, after_execveat);
+}
+static DECLARE_WORK(unhook_execve_work, do_unhook_execve_work);
+
 static void handle_after_execve(hook_local_t *hook_local, long ret)
 {
     // Auto-su for processes executed by trusted manager
@@ -1470,8 +1508,7 @@ static void handle_after_execve(hook_local_t *hook_local, long ret)
 
     int unhook = hook_local->data7;
     if (unhook) {
-        unhook_syscalln(__NR_execve, before_execve, after_execve);
-        unhook_syscalln(__NR_execveat, before_execveat, after_execveat);
+        schedule_work(&unhook_execve_work);
     }
 }
 
