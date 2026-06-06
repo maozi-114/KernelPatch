@@ -436,7 +436,7 @@ long load_module(const void *data, int len, const char *args, const char *event,
 
     if (!rc) {
         logkfi("[%s] succeed with [%s] \n", mod->info.name, args);
-        list_add_tail(&mod->list, &modules.list);
+        list_add_tail_rcu(&mod->list, &modules.list);
         goto out;
     } else {
         logkfi("[%s] failed with [%s] error: %d, try exit ...\n", mod->info.name, args, rc);
@@ -466,7 +466,8 @@ long unload_module(const char *name, void *__user reserved)
         rc = -ENOENT;
         goto out;
     }
-    list_del(&mod->list);
+    list_del_rcu(&mod->list);
+    synchronize_rcu();
     rc = (*mod->exit)(reserved);
 
     if (mod->args) kvfree(mod->args);
@@ -592,7 +593,7 @@ out:
 struct module *find_module(const char *name)
 {
     struct module *pos;
-    list_for_each_entry(pos, &modules.list, list)
+    list_for_each_entry_rcu(pos, &modules.list, list)
     {
         if (!strcmp(name, pos->info.name)) {
             return pos;
@@ -607,7 +608,7 @@ int get_module_nums()
 
     struct module *pos;
     int n = 0;
-    list_for_each_entry(pos, &modules.list, list)
+    list_for_each_entry_rcu(pos, &modules.list, list)
     {
         n++;
     }
@@ -623,7 +624,7 @@ int list_modules(char *out_names, int size)
 
     struct module *pos;
     int off = 0;
-    list_for_each_entry(pos, &modules.list, list)
+    list_for_each_entry_rcu(pos, &modules.list, list)
     {
         off += snprintf(out_names + off, size - 1 - off, "%s\n", pos->info.name);
     }
